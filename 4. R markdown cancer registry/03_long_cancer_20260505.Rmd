@@ -1,0 +1,66 @@
+---
+title: "Pancreatic tumor"
+output: html_document
+date: "2026-05-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+```{r}
+# create directories
+
+dir.create("../rds", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+
+dir.create("../rds/cancer", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+
+```{r}
+df_gi <- readRDS("../rds/cancer/df_inc_panc.RDS")
+```
+
+```{r}
+# get age colnames
+
+levels_age <- df_gi %>%
+  select(starts_with("AGE")) %>%
+  colnames() %>%
+  str_remove_all("AGE_")
+
+levels_age
+```
+
+```{r}
+df_gi_long <- df_gi %>%
+  pivot_longer(cols = starts_with("AGE"),
+               names_to = "AGE",
+               values_to = "VALUE") %>%
+  mutate(AGE = str_remove_all(AGE, "AGE_")) %>%
+  mutate(AGE = factor(AGE, levels = levels_age))
+```
+
+
+```{r}
+colnames(df_gi_long)
+```
+
+```{r}
+df_gi_long <- df_gi_long %>%
+  select(any_of(c("id", "ORG", "YEAR", 
+                "PRF", "SEX", "AGE",
+                "TOTAL" , "VALUE",   
+                "LOC_code", "ICD", "iso_3166_2",
+                "PRF_jp",  "REG", "FILE", "COL")))
+```
+
+```{r}
+saveRDS(df_gi_long, "../rds/cancer/df_inc_panc_long.RDS")
+```
+

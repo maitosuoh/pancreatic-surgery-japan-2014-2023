@@ -1,0 +1,171 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-10-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+library(rvest)
+```
+
+```{r}
+# create directories
+
+dir.create("../xlsx", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+
+dir.create("../xlsx/cancer", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+
+```{r}
+# create directories
+
+dir.create("../rds", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+
+dir.create("../rds/estat", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+
+```
+
+```{r}
+url_root <- c("https://www.e-stat.go.jp/stat-search/files?page=1&layout=datalist&toukei=00450173&tstat=000001133323&cycle=7&tclass1=000001133363&tclass2=000001133368&tclass3=000001133370&tclass4val=0")
+```
+
+```{r}
+html_root <- read_html(url_root)
+```
+
+```{r}
+#html_root %>%  html_element("table") 
+```
+
+```{r}
+df_root <- html_root %>% 
+  html_elements("div[class = stat-cycle_sheet]") %>%
+  html_elements("ul[class = stat-cycle_ul_year]") %>%
+  html_elements("li[class = stat-cycle_item]") %>%
+  html_elements("a")  %>% 
+  as.character() %>%
+  as_tibble() %>% 
+  mutate(URL_year = str_extract(value, '(?<=href\\=\\")[^\\"]+(?=\\")')) %>%
+  mutate(YEAR = str_extract(value, "[:digit:]{4}(?=年)"))　%>% 
+  mutate(URL_year = str_remove_all(URL_year, "amp\\;")) %>%
+  mutate(URL_year = paste0("https://www.e-stat.go.jp", URL_year)) %>%
+  select(YEAR, URL_year)
+
+df_root
+```
+
+
+```{r}
+df_url <- purrr::map(df_root$URL_year, function(x){
+  
+  html <- read_html(x)
+  
+  df <- html %>%
+    html_elements('div[class="stat-dataset_list-main"]') %>%
+    html_elements('ul[class="stat-dataset_list-detail"]') %>%
+    as.character() %>%
+    as_tibble()
+  
+  df <- df %>%
+    mutate(value = str_remove_all(value, "\\\n|\\\t")) %>%
+    mutate(value = str_remove(value, ".+表番号\\s</span><span>")) %>%
+    mutate(TBL = str_extract(value, "^[^<]+(?=<)")) %>% 
+    mutate(value = str_remove(value, '.+<a tabindex="22"[^>]+>')) %>%
+    mutate(LOC = str_extract(value, "^[^<]+(?=</a>)")) %>%
+    mutate(LOC = str_trim(LOC, side = "both")) %>%
+    mutate(LOC_code = str_extract(LOC, "C.+$")) %>%
+    mutate(LOC_name = str_remove(LOC, "C.+$")) %>%
+    mutate(value = str_remove(value, ".+調査年月")) %>% 
+    mutate(value = str_trim(value, side = "both")) %>%
+    mutate(value = str_remove(value, "</span>")) %>%
+    mutate(value = str_trim(value, side = "both")) %>%
+    mutate(YEAR = str_extract(value, "[:digit:]{4}")) %>%
+    mutate(value = str_remove(value, ".+公開（更新）日")) %>%
+    mutate(value = str_trim(value, side = "both")) %>%
+    mutate(value = str_remove(value, "</span>")) %>%
+    mutate(value = str_trim(value, side = "both")) %>%
+    mutate(DATE = str_extract(value, "[:digit:]{4}\\-[:digit:]{2}\\-[:digit:]{2}")) %>%
+    mutate(URL = str_extract(value, '(?<=href\\=\\")[^\\"]+(?=\\")') ) %>%
+    mutate(URL = paste0("https://www.e-stat.go.jp", URL)) %>%
+    mutate(URL = str_remove(URL, "amp\\;")) %>% 
+    mutate(FOLDER = str_replace_all(TBL, "-", "_")) %>%
+    mutate(LOC_code_2 = str_to_lower(LOC_code)) %>%
+    mutate(LOC_code_2 = str_replace_all(LOC_code_2, "-|\\s", "_") ) %>%
+    mutate(XLSX = paste0(YEAR, "_", str_to_lower(FOLDER), "_", LOC_code_2 )) %>%
+    select(TBL, LOC_name, LOC_code, YEAR, DATE, URL, FOLDER, XLSX)
+  
+  return(df)
+  
+}) %>% list_rbind()
+```
+
+
+```{r}
+df_url %>%
+  count(TBL)
+```
+
+# create folder
+
+```{r}
+folder_name <- df_url %>% distinct(TBL) %>% pull(TBL)
+
+folder_path <- paste0("../xlsx/cancer/", folder_name) %>% str_replace_all("-", "_")
+
+folder_path
+```
+
+```{r}
+df_url %>% distinct(XLSX) %>% nrow()
+
+# unique xlsx name
+```
+
+
+```{r}
+for (i in 1:length(folder_path)){
+  dir.create(folder_path[i],  showWarnings = TRUE, recursive = FALSE, mode = "0777")
+}
+```
+
+
+```{r}
+xlsx_all <- df_url$XLSX
+```
+
+```{r}
+saveRDS(df_root, "../rds/estat/df_root.RDS")
+
+
+saveRDS(df_url, "../rds/estat/df_url.RDS")
+```
+
+
+
+```{r}
+for (i in 1:length(xlsx_all)){
+  
+  xlsx <- xlsx_all[i]
+  
+  folder <- df_url %>% filter(XLSX == xlsx) %>% pull(FOLDER)
+  
+  dest <- paste0("../xlsx/cancer/", folder, "/", xlsx, ".xlsx")
+  
+  url <- df_url %>% filter(XLSX == xlsx) %>% pull(URL)
+  
+  download.file(url = url,
+                destfile = dest,
+                mode = "wb")
+  print(paste0(xlsx, " completed"))
+  
+}
+```
+
+# end

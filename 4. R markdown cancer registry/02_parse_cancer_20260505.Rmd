@@ -1,0 +1,370 @@
+---
+title: "Pancreatic tumor"
+output: html_document
+date: "2026-05-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+```{r}
+# create directories
+
+dir.create("../rds", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+
+dir.create("../rds/cancer", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+
+```{r}
+list.files("../xlsx/cancer")
+
+```
+
+```{r}
+#path_xlsx <- paste0("../xlsx/cancer/", list.files("../xlsx/cancer", pattern = "21-a-10_c25"))
+
+#path_xlsx
+```
+
+
+```{r}
+# need to filter
+# 22-A-10 膵臓　C25　　　
+```
+
+
+```{r}
+tbl_code <- c("22-A-10") %>%
+  str_replace_all("-", "_")
+
+org_name <- c("Pancreas")
+```
+
+
+```{r}
+df_gi <- map2(tbl_code, org_name, function(x, y){
+  
+  folder <- paste0("../xlsx/cancer/", x)
+  
+  files <- list.files(folder)
+  
+  path <- paste0(folder, "/", files)
+  
+  df <- purrr::map(path, function(z){
+    
+    year <- z %>% str_extract("[:digit:]{4}")
+    
+    folder <- z %>% str_extract("(?<=xlsx\\/)[^\\/]+")
+    
+    file <- z %>% 
+      str_extract("(?<=\\/)[^\\/]+(?=\\.xlsx)") %>%
+      str_remove(paste0(year, "_")) 
+    
+    df_in <- read_excel(z) %>% 
+      mutate(YEAR = year) %>%
+      mutate(LOC_code = folder) %>%
+      mutate(FILE = file)
+    
+    # change 1st colname
+    
+    if (str_detect(colnames(df_in)[1], "年")){
+    
+    col_new <- colnames(df_in)[1]
+    
+    df_in <- df_in %>% mutate(COL = col_new) 
+    
+    colnames(df_in)[1] <- "id"
+    }
+  
+  else{
+    df_in <- df_in
+  }
+
+    return(df_in)
+    
+  }) %>% list_rbind()
+  
+  df <- df %>% mutate(ORG = y) %>%
+    mutate(ICD = str_remove(FILE,
+                            paste0(str_to_lower(LOC_code), "_"))) %>%
+    mutate(ICD = str_to_upper(ICD))
+  
+  return(df)
+  
+}) %>%  list_rbind()
+```
+
+
+```{r}
+# change colnames 2-4
+
+colnames(df_gi)
+
+col_2_4 <- c("SEX", "PRF_jp", "TOTAL")
+
+colnames(df_gi)[2:4] <- col_2_4
+```
+
+```{r}
+# recode SEX column, factorize later
+
+df_gi <- df_gi %>%
+  mutate(SEX = case_when(SEX == "総数" ~ "Total",
+                         SEX == "男" ~ "Male",
+                         SEX == "女" ~ "Female"))
+```
+
+
+```{r}
+#change age column names
+
+col_age <- map_vec(colnames(df_gi), function(x){
+  
+  if(str_detect(x, "歳")){
+    x <- paste0("AGE_", x) %>% str_remove("歳") %>%
+      str_replace("-", "_") %>%
+      str_replace("以上", "_")
+  }
+  else{
+    x <- x %>% str_replace("不詳", "AGE_UN")
+  }
+})
+
+col_age
+```
+
+```{r}
+colnames(df_gi) <- col_age
+```
+
+
+```{r}
+# add prefecture information
+
+df_prf <- rnaturalearth::ne_states("japan") %>% 
+  as_tibble() %>%
+  select(iso_3166_2, name_ja, name_en) %>%
+  rename(PRF_jp = "name_ja",
+         PRF= "name_en") %>%
+  arrange(iso_3166_2)
+```
+
+```{r}
+df_prf <- df_prf %>%
+  mutate(PRF = str_remove(PRF, "Prefecture")) %>%
+  mutate(PRF = str_trim(PRF, side = "both")) %>%
+  mutate(PRF = str_replace_all(PRF, "Ō", "O")) %>%
+  mutate(PRF = str_replace_all(PRF, "ō", "o"))
+```
+
+```{r}
+df_gi <- df_gi %>%
+    mutate(PRF_jp = str_remove_all(PRF_jp, "　")) %>%
+    mutate(PRF_jp = case_when(PRF_jp == "東京" ~ "東京都",
+                              PRF_jp %in% c("大阪", "京都") ~ paste0(PRF_jp, "府"),
+                              PRF_jp %in% c("北海道",
+                                            "全国",
+                                            "不詳",
+                                            "外国")~ PRF_jp,
+                              .default = paste0(PRF_jp, "県")))
+  
+df_gi <- df_gi %>%
+    left_join(df_prf,
+              by = join_by(PRF_jp))
+```
+
+```{r}
+# define region
+
+hokkaido <- c("JP-01")
+
+tohoku <- c(paste0("JP-0", as.character(2:7)))
+
+kanto <- c(paste0("JP-0", as.character(8:9)), 
+           paste0("JP-", as.character(10:14)))
+
+chubu <- c(paste0("JP-", as.character(15:24)))
+
+kansai <- c(paste0("JP-", as.character(25:30)))
+
+chugoku <- c(paste0("JP-", as.character(31:35)))
+
+shikoku <- c(paste0("JP-", as.character(36:39)))
+
+kyushu_okinawa <- c(paste0("JP-", as.character(40:47)))
+
+```
+
+
+```{r}
+levels_reg <- c("Hokkaido",
+                "Tohoku",
+                "Kanto",
+                "Chubu",
+                "Kansai",
+                "Chugoku",
+                "Shikoku",
+                "Kyushu\nOkinawa")
+```
+
+```{r}
+levels_prf <- df_prf  %>%
+  filter(!is.na(iso_3166_2)) %>%
+  arrange(iso_3166_2) %>%
+  distinct(PRF) %>%
+  pull(PRF)
+```
+
+
+```{r}
+df_gi <- df_gi  %>%
+  mutate(REG = case_when(iso_3166_2 %in% hokkaido ~ "Hokkaido",
+                         iso_3166_2 %in% tohoku ~ "Tohoku",
+                         iso_3166_2 %in% kanto ~ "Kanto",
+                         iso_3166_2 %in% chubu ~ "Chubu",
+                         iso_3166_2 %in% kansai ~ "Kansai",
+                         iso_3166_2 %in% chugoku ~ "Chugoku",
+                         iso_3166_2 %in% shikoku ~ "Shikoku",
+                         iso_3166_2 %in% kyushu_okinawa ~ "Kyushu\nOkinawa")) %>%
+  mutate(REG = factor(REG, levels = levels_reg)) %>%
+  mutate(PRF = factor(PRF, levels = levels_prf))
+```
+
+```{r}
+# factorize organ
+
+df_gi <- df_gi %>%
+  mutate(ORG = factor(ORG, levels = org_name))
+```
+
+```{r}
+saveRDS(df_gi, "../rds/cancer/df_inc_panc.RDS")
+```
+
+
+#
+
+
+```{r}
+df_gi %>%
+  filter(!is.na(PRF)) %>%
+  filter(SEX == "Total")　%>%
+  ggplot(aes(YEAR, TOTAL, group = PRF, colour = REG))+
+  geom_line(linewidth = 0.3) +
+  facet_wrap(vars(ORG), scales = "free_y")+
+  theme_classic()
+  
+```
+
+
+
+```{r}
+ folder <- paste0("../xlsx/", tbl_code[1])
+  
+  files <- list.files(folder)
+  
+  path <- paste0(folder, "/", files)
+  
+  folder
+  files
+  path
+```
+
+
+```{r}
+ co1_new <- colnames(df_in)[1]
+
+   df_in <- df_in %>% mutate(COL = col_new) 
+    
+    colnames(df_in)[1] <- "id"
+```
+
+
+```{r}
+df_prf <- rnaturalearth::ne_states("japan") %>% 
+  as_tibble() %>%
+  select(iso_3166_2, name_ja, name_en) %>%
+  rename(PRF_jp = "name_ja",
+         PRF= "name_en") %>%
+  arrange(iso_3166_2)
+```
+
+```{r}
+df_prf <- df_prf %>%
+  mutate(PRF = str_remove(PRF, "Prefecture")) %>%
+  mutate(PRF = str_trim(PRF, side = "both")) %>%
+  mutate(PRF = str_replace_all(PRF, "Ō", "O")) %>%
+  mutate(PRF = str_replace_all(PRF, "ō", "o"))
+```
+
+
+
+```{r}
+df_can_inc <- purrr::map(path_xlsx, function(path){
+  df <- read_excel(path)
+  
+  df <- df[, 1:5]
+  
+  colnames(df) <- c("id", "PRF_jp", "INC_m", "INC_f", "INC_all")
+  
+  year <- str_extract(path, "[:digit:]{4}")
+  
+  df <- df %>%
+    mutate(YEAR = year)
+  
+  df <- df %>%
+    mutate(PRF_jp = str_remove_all(PRF_jp, "　")) %>%
+    mutate(PRF_jp = case_when(PRF_jp == "東京" ~ "東京都",
+                              PRF_jp %in% c("大阪", "京都") ~ paste0(PRF_jp, "府"),
+                              PRF_jp %in% c("北海道",
+                                            "全国",
+                                            "不詳",
+                                            "外国")~ PRF_jp,
+                              .default = paste0(PRF_jp, "県")))
+  
+  df <- df %>%
+    left_join(df_prf,
+              by = join_by(PRF_jp))
+  
+  df <- df %>%
+    pivot_longer(cols = starts_with("INC_"),
+                 names_to = "SEX",
+                 values_to = "INC")
+  
+  df <- df %>%
+    mutate(SEX = case_when(str_detect(SEX, "_m") ~ "Male",
+                           str_detect(SEX, "_f") ~ "Female",
+                           str_detect(SEX, "_all") ~ "All")) %>%
+    mutate(SEX = factor(SEX, levels = c("All",
+                                        "Male",
+                                        "Female")))
+          
+  return(df)
+                       }) %>%
+  list_rbind()
+```
+
+
+```{r}
+saveRDS(df_can_inc,
+        "../rds/cancer/df_can_inc.RDS")
+```
+
+```{r}
+df_can_inc %>%
+  filter(PRF_jp == "全国")　%>%
+  ggplot(aes(YEAR, INC, group = SEX, colour = SEX ))+
+  geom_line(linewidth = 0.3)+
+  geom_point(size = 1)+
+  scale_colour_manual(values = c("black","#1f77b4", "#d62728"))+
+  scale_y_continuous(limits = c(0, NA))+
+  theme_classic()
+```
+
